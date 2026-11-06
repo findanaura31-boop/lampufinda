@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulator Lampu Lalu Lintas</title>
+<style>
+:root{--bg:#f3d9f7;--panel:#4a3a5e;--ink:#fff;--mut:#d9c9ec;--btn:#e8a8f0;--btn2:#f6c75a;--on:#fff3a8}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;gap:18px;align-items:center;justify-content:center;flex-wrap:wrap;padding:16px;
+ background:var(--page,linear-gradient(160deg,#f7b955,#e293e8 55%,#b995f0));font-family:"Trebuchet MS","Segoe UI",sans-serif;color:var(--ink)}
+canvas{width:min(92vw,78vh,720px);aspect-ratio:1;border-radius:22px;box-shadow:0 8px 30px #0004;background:var(--cv,#e9b6ef)}
+aside{width:min(92vw,300px);background:var(--panel);transition:background .3s;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:12px}
+h1{font-size:15px;margin:0;color:var(--mut);font-weight:600}
+#clock{font-size:34px;font-weight:800}
+.row{display:flex;align-items:center;gap:10px;background:#0003;border-radius:14px;padding:10px 12px}
+.dot{width:16px;height:16px;border-radius:50%;flex:none;background:#777}
+.row b{display:block;font-size:14px}.row span{font-size:13px;color:var(--mut)}
+.stat{background:#0003;border-radius:14px;padding:10px 12px;font-size:13px;color:var(--mut)}
+.stat strong{display:block;font-size:26px;color:#fff}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{border:0;border-radius:12px;padding:11px 8px;font:700 14px inherit;font-family:inherit;cursor:pointer;background:var(--btn);color:var(--btnink,#3a2150)}
+button.on{outline:3px solid var(--on)}
+#swap{background:var(--btn2)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid #fff}
+label{font-size:13px;display:flex;justify-content:space-between;color:var(--mut)}
+input[type=range]{width:100%;accent-color:#e8a8f0}
+#dur table{width:100%;border-collapse:collapse;color:#fff}
+#dur td{padding:3px 4px}#dur td:last-child{text-align:right;font-weight:700}
+#dur td:first-child{width:22px}
+#dnote{display:block;margin-top:6px;font-size:12px}
+#themes{display:flex;flex-wrap:wrap;gap:6px}#themes button{padding:7px 10px;font-size:12px;border-radius:999px}
+small{font-size:12px;color:var(--mut);line-height:1.4}
+</style>
+</head>
+<body>
+<canvas id="c" width="800" height="800"></canvas>
+<aside>
+  <h1>Simulator persimpangan (lalu lintas sisi kiri)</h1>
+  <div id="clock">00:00</div>
+  <label>Tema tampilan</label>
+  <div id="themes"></div>
+  <div class="row"><i class="dot" id="d0"></i><div><b>Utara</b><span id="t0"></span></div></div>
+  <div class="row"><i class="dot" id="d1"></i><div><b>Timur</b><span id="t1"></span></div></div>
+  <div class="row"><i class="dot" id="d2"></i><div><b>Selatan</b><span id="t2"></span></div></div>
+  <div class="row"><i class="dot" id="d3"></i><div><b>Barat</b><span id="t3"></span></div></div>
+  <div class="stat" id="dur">
+    <table>
+      <tr><td><i class="dot" style="background:#3bff7a"></i></td><td>Durasi hijau</td><td id="dg"></td></tr>
+      <tr><td><i class="dot" style="background:#ffd23b"></i></td><td>Durasi kuning</td><td id="dy"></td></tr>
+      <tr><td><i class="dot" style="background:#ff3b3b"></i></td><td>Durasi merah</td><td id="dr"></td></tr>
+      <tr><td></td><td>Satu siklus</td><td id="dc"></td></tr>
+    </table>
+    <span id="dnote"></span>
+  </div>
+  <div class="stat">Mobil lewat<strong id="cnt">0</strong><span id="kc"></span></div>
+  <div class="btns">
+    <button id="auto" class="on">Otomatis</button>
+    <button id="manual">Manual</button>
+    <button id="swap" style="grid-column:span 2" disabled>Ganti lampu</button>
+  </div>
+  <label>Durasi hijau <span id="gv">10 d</span></label>
+  <input type="range" id="gs" min="4" max="30" value="10">
+  <label>Kepadatan lalu lintas <span id="dv">50%</span></label>
+  <input type="range" id="ds" min="10" max="100" value="50">
+  <label>Proporsi mobil belok <span id="tv">40%</span></label>
+  <input type="range" id="ts" min="0" max="80" value="40">
+  <small>Setiap arah punya 2 lajur: lajur kiri untuk lurus dan belok kiri, lajur kanan untuk lurus dan belok kanan. Mobil berkedip oranye sedang berbelok.<br><br></small>
+  <small>Pintasan keyboard: Spasi untuk ganti lampu (mode manual), A untuk otomatis, M untuk manual. Pada mode manual, lampu hijau bertahan sampai Anda menekan Ganti lampu.</small>
+</aside>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+// Tiap arah punya 2 lajur selebar 40 px. Tepi persimpangan di B0..B1.
+const C=400,HALF=80,B0=C-HALF,B1=C+HALF,STOP=B0-36,LEN=36,CW=18,VMAX=110,ACC=70,DEC=170,YEL=3;
+const XL=[60,20];   // posisi lajur dari pusat: 0 = lajur kiri (lurus/kiri), 1 = lajur kanan (lurus/kanan)
+const DIRS=['S','N','E','W'];
+const lanes={};for(const d of DIRS)lanes[d]=[[],[]];
+const COL=['#f5c542','#ffffff','#6ec6ff','#ff7eb6','#b58cff','#ff9a4d','#e8e8f0','#5ee0a0'];
+let phase=0,timer=0,mode='auto',count=0,clock=0,greenDur=10,density=.5,last=performance.now();
+const $=id=>document.getElementById(id);
+const THEMES={
+  neon:{n:'Neon ungu',page:'linear-gradient(160deg,#f7b955,#e293e8 55%,#b995f0)',panel:'#4a3a5e',btn:'#e8a8f0',btn2:'#f6c75a',ink:'#3a2150',g0:'#f0b3f4',g1:'#c9a3f2',block:'#8b5fb0aa',neon:['#f5a623','#3fc7ff','#ff6b6b'],road:'#4a3a48',line:'#f4c542'},
+  siang:{n:'Siang cerah',page:'linear-gradient(160deg,#bfe9ff,#e6f7d8)',panel:'#2f4a5a',btn:'#8fd3f4',btn2:'#ffd166',ink:'#12303f',g0:'#cdeab0',g1:'#a9d98c',block:'#f3f6eecc',neon:['#7fb069','#e0a458','#6c91c2'],road:'#555b63',line:'#ffe066'},
+  malam:{n:'Malam kota',page:'linear-gradient(160deg,#0b1026,#1c2350)',panel:'#161b3a',btn:'#4cc9f0',btn2:'#f72585',ink:'#041425',g0:'#10163a',g1:'#1b1f4d',block:'#2a2f6acc',neon:['#00f5d4','#f72585','#fee440'],road:'#1a1a24',line:'#fee440'},
+  senja:{n:'Senja',page:'linear-gradient(160deg,#ff9a76,#ff5e78 55%,#6a4c93)',panel:'#4b2a4a',btn:'#ffb38a',btn2:'#ffd56b',ink:'#3d1a2e',g0:'#ffc1a1',g1:'#d98bb0',block:'#a34f7acc',neon:['#ffd56b','#ffffff','#7be0d4'],road:'#3d2a3c',line:'#ffd56b'},
+  salju:{n:'Salju',page:'linear-gradient(160deg,#dff3ff,#b8cfe8)',panel:'#34495e',btn:'#9ad1f5',btn2:'#fff2a8',ink:'#102a43',g0:'#f4fbff',g1:'#d6e6f5',block:'#ffffffdd',neon:['#6ea8d9','#9ccfe6','#b0b8e8'],road:'#6b7683',line:'#ffffff'}
+};
+let T=THEMES.neon;
+function applyTheme(k){
+  if(!THEMES[k])k='neon';
+  T=THEMES[k];const st2=document.documentElement.style;
+  st2.setProperty('--page',T.page);st2.setProperty('--panel',T.panel);st2.setProperty('--btn',T.btn);
+  st2.setProperty('--btn2',T.btn2);st2.setProperty('--btnink',T.ink);st2.setProperty('--cv',T.g0);
+  document.querySelectorAll('#themes button').forEach(b=>b.classList.toggle('on',b.dataset.k==k));
+  try{localStorage.setItem('tema',k)}catch(e){}
+}
+for(const k in THEMES){
+  const b=document.createElement('button');b.textContent=THEMES[k].n;b.dataset.k=k;
+  b.onclick=()=>applyTheme(k);$('themes').appendChild(b);
+}
+let saved='neon';try{saved=localStorage.getItem('tema')||'neon'}catch(e){}
+applyTheme(saved);
+// Tiap arah punya lampu sendiri dan bergantian searah jarum jam: Utara, Timur, Selatan, Barat.
+// phase 0..7: genap = hijau, ganjil = kuning, arah ke-(phase>>1). Hanya satu arah yang jalan, jadi belok tidak bertabrakan.
+// Arah gerak mobil: S = datang dari Utara, W = dari Timur, N = dari Selatan, E = dari Barat.
+const ORDER=['S','W','N','E'],NAMES=['Utara','Timur','Selatan','Barat'];
+const stI=i=>(phase>>1)==i?(phase%2?'y':'g'):'r';
+const st=d=>stI(ORDER.indexOf(d));
+
+function setMode(m){
+  mode=m;timer=0;
+  $('auto').classList.toggle('on',m=='auto');
+  $('manual').classList.toggle('on',m=='manual');
+  $('swap').disabled=(m=='auto');
+}
+function swap(){ if(mode=='manual'&&phase%2==0){phase=(phase+1)%8;timer=0;} }
+$('auto').onclick=()=>setMode('auto');
+$('manual').onclick=()=>setMode('manual');
+$('swap').onclick=swap;
+$('gs').oninput=e=>{greenDur=+e.target.value;$('gv').textContent=greenDur+' d'};
+$('ds').oninput=e=>{density=e.target.value/100;$('dv').textContent=e.target.value+'%'};
+addEventListener('keydown',e=>{
+  if(e.code=='Space'){e.preventDefault();swap();}
+  if(e.key=='a'||e.key=='A')setMode('auto');
+  if(e.key=='m'||e.key=='M')setMode('manual');
+});
+
+// posisi: p = jarak ujung depan mobil sepanjang arah jalan (0..800)
+
+const EXIT={S:{F:'S',L:'E',R:'W'},N:{F:'N',L:'W',R:'E'},E:{F:'E',L:'N',R:'S'},W:{F:'W',L:'S',R:'N'}};
+const AL=20*Math.PI/2,TL={F:Infinity,L:AL,R:160+AL};
+let turnShare=.4;const kc={F:0,L:0,R:0};
+$('ts').oninput=e=>{turnShare=e.target.value/100;$('tv').textContent=e.target.value+'%'};
+// Lintasan untuk arah S (dari utara ke selatan) relatif ke pusat, diputar untuk arah lain.
+// Belok kiri: tikungan pendek ke lajur kiri tujuan. Belok kanan: tikungan lebar lewat tengah ke lajur kanan tujuan.
+function rel(t,l,q){
+  const x=XL[l];
+  if(t=='F'||q<B0)return[x,q-C,Math.PI/2];
+  const u=q-B0;
+  if(t=='L'){const f=Math.PI-Math.min(u,AL)/20;return[80+20*Math.cos(f),-80+20*Math.sin(f),Math.atan2(-Math.cos(f),Math.sin(f))];}
+  if(u<80)return[20,-80+u,Math.PI/2];
+  if(u<80+AL){const f=(u-80)/20;return[20*Math.cos(f),20*Math.sin(f),Math.atan2(Math.cos(f),-Math.sin(f))];}
+  return[-(u-80-AL),20,Math.PI];
+}
+function place(d,t,l,q){
+  const[dx,dy,a]=rel(t,l,q);
+  switch(d){
+    case 'S':return[C+dx,C+dy,a];
+    case 'N':return[C-dx,C-dy,a+Math.PI];
+    case 'E':return[C+dy,C-dx,a-Math.PI/2];
+    default:return[C-dy,C+dx,a+Math.PI/2];
+  }
+}
+// ada mobil dari arah lain di dalam persimpangan?
+function boxBusy(me){
+  for(const d of DIRS)if(d!=me)for(const arr of lanes[d])for(const c of arr)
+    if(c.p>B0&&(c.t!='F'||c.p<B1+LEN))return true;
+  return false;
+}
+function step(dt){
+  clock+=dt;
+  if(mode=='auto'||phase%2==1){
+    timer+=dt;
+    const lim=phase%2?YEL:greenDur;
+    if(timer>=lim){phase=(phase+1)%8;timer=0;}
+  }else timer+=dt;
+  for(const d of DIRS){
+    const s=st(d);
+    // munculkan mobil baru: belok kiri di lajur kiri, belok kanan di lajur kanan, lurus di salah satunya
+    if(Math.random()<density*.8*dt){
+      const r=Math.random(),k=r<turnShare/2?'L':r<turnShare?'R':'F';
+      const l=k=='L'?0:k=='R'?1:(Math.random()<.5?0:1);
+      const a=lanes[d][l],tail=a[a.length-1];
+      if(!tail||tail.p>LEN+24)a.push({p:0,v:VMAX*.6,col:COL[Math.random()*COL.length|0],counted:false,t:k,k,l});
+    }
+    for(let l=0;l<2;l++){
+      const arr=lanes[d][l];
+      for(let i=0;i<arr.length;i++){
+        const c=arr[i];let limit=Infinity;
+        if(i>0)limit=arr[i-1].p-LEN-10;
+        if(c.p<=STOP){
+          const red=s=='r'||(s=='y'&&STOP-c.p>25);
+          if(red||boxBusy(d))limit=Math.min(limit,STOP);
+        }
+        const gap=Math.max(0,limit-c.p);
+        const vmax=(c.t!='F'&&c.p>STOP-25)?60:VMAX;
+        const vt=Math.min(vmax,Math.sqrt(2*DEC*gap));
+        c.v=vt>c.v?Math.min(vt,c.v+ACC*dt):vt;
+        c.p+=c.v*dt;
+        if(limit<Infinity&&c.p>limit)c.p=Math.max(limit,c.p-c.v*dt);
+        if(c.t=='F'&&!c.counted&&c.p>B1+5){c.counted=true;count++;kc[c.k]++;}
+      }
+      // mobil yang selesai berbelok pindah ke lajur tujuan
+      for(const c of arr.filter(c=>c.t!='F'&&c.p-LEN/2-B0>=TL[c.t])){
+        const u=c.p-LEN/2-B0-TL[c.t];
+        arr.splice(arr.indexOf(c),1);
+        c.p=B1+u+LEN/2;c.l=c.k=='L'?0:c.k=='R'?1:c.l;c.t='F';c.counted=true;count++;kc[c.k]++;
+        const ex=lanes[EXIT[d][c.k]][c.l];let j=0;
+        while(j<ex.length&&ex[j].p>c.p)j++;
+        ex.splice(j,0,c);
+      }
+      while(arr.length&&arr[0].p>860)arr.shift();
+    }
+  }
+}
+function rr(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r);}
+function arrow(x,y,a,L,R){
+  ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.strokeStyle='#ffffffaa';ctx.lineWidth=3;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(12,0);ctx.moveTo(12,0);ctx.lineTo(5,-5);ctx.moveTo(12,0);ctx.lineTo(5,5);
+  if(L){ctx.moveTo(-2,0);ctx.lineTo(8,-12);}
+  if(R){ctx.moveTo(-2,0);ctx.lineTo(8,12);}
+  ctx.stroke();ctx.restore();
+}
+function drawScene(){
+  ctx.clearRect(0,0,800,800);
+  const g=ctx.createLinearGradient(0,0,800,800);g.addColorStop(0,T.g0);g.addColorStop(1,T.g1);
+  ctx.fillStyle=g;ctx.fillRect(0,0,800,800);
+  // blok kota
+  const neon=T.neon;let k=0;
+  for(const [x,y] of [[30,30],[30,535],[535,30],[535,535]]){
+    for(let a=0;a<2;a++)for(let b=0;b<2;b++){
+      const bx=x+a*125,by=y+b*125;
+      ctx.fillStyle=T.block;rr(bx,by,110,110,10);ctx.fill();
+      ctx.strokeStyle=neon[k++%3];ctx.lineWidth=3;ctx.stroke();
+    }
+  }
+  // jalan
+  ctx.fillStyle=T.road;
+  ctx.fillRect(C-HALF,0,HALF*2,800);ctx.fillRect(0,C-HALF,800,HALF*2);
+  // pembatas lajur (putus-putus) dan marka tengah (kuning)
+  const segs=(o,fn)=>{fn(C+o,0,B0-36);fn(C+o,B1+36,800);};
+  ctx.strokeStyle='#ffffff88';ctx.lineWidth=2;ctx.setLineDash([14,12]);ctx.beginPath();
+  for(const o of [-40,40]){
+    ctx.moveTo(C+o,0);ctx.lineTo(C+o,B0-36);ctx.moveTo(C+o,B1+36);ctx.lineTo(C+o,800);
+    ctx.moveTo(0,C+o);ctx.lineTo(B0-36,C+o);ctx.moveTo(B1+36,C+o);ctx.lineTo(800,C+o);
+  }
+  ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle=T.line;ctx.lineWidth=2;ctx.beginPath();
+  for(const o of [-2,2]){
+    ctx.moveTo(C+o,0);ctx.lineTo(C+o,B0-36);ctx.moveTo(C+o,B1+36);ctx.lineTo(C+o,800);
+    ctx.moveTo(0,C+o);ctx.lineTo(B0-36,C+o);ctx.moveTo(B1+36,C+o);ctx.lineTo(800,C+o);
+  }
+  ctx.stroke();
+  // zebra cross dan garis henti
+  ctx.fillStyle='#ffffffdd';
+  for(let i=-HALF+6;i<HALF-4;i+=12){
+    ctx.fillRect(C+i,B0-30,7,22);ctx.fillRect(C+i,B1+8,7,22);
+    ctx.fillRect(B0-30,C+i,22,7);ctx.fillRect(B1+8,C+i,22,7);
+  }
+  ctx.fillStyle='#fff';
+  ctx.fillRect(C,B0-36,HALF,3);ctx.fillRect(C-HALF,B1+33,HALF,3);
+  ctx.fillRect(B0-36,C-HALF,3,HALF);ctx.fillRect(B1+33,C,3,HALF);
+  // panah lajur: kiri = lurus + kiri, kanan = lurus + kanan
+  for(const d of DIRS)for(let l=0;l<2;l++){const[x,y,a]=place(d,'F',l,200);arrow(x,y,a,l==0,l==1);}
+}
+// sisa detik sampai lampu berganti; null = menunggu tombol manual
+function remaining(i){
+  const s=stI(i),left=(phase%2?YEL:greenDur)-timer;
+  if(s=='y')return Math.ceil(left);
+  if(s=='g')return mode=='auto'?Math.ceil(left):null;
+  if(mode!='auto')return (phase+1)%8==2*i?Math.ceil(left):null;
+  let t=left,ph=(phase+1)%8;
+  while(ph!=2*i){t+=ph%2?YEL:greenDur;ph=(ph+1)%8;}
+  return Math.ceil(t);
+}
+function drawLight(x,y,state,rem,name){
+  ctx.fillStyle='#1d1626';rr(x-9,y-24,18,48,8);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 15px "Trebuchet MS",sans-serif';ctx.textAlign='center';
+  ctx.fillText(rem==null?'M':rem,x,y+42);
+  ctx.font='bold 11px "Trebuchet MS",sans-serif';ctx.fillText(name,x,y-30);
+  [['r','#ff3b3b'],['y','#ffd23b'],['g','#3bff7a']].forEach(([k,col],i)=>{
+    const on=state==k;ctx.fillStyle=on?col:'#443a50';
+    ctx.shadowColor=col;ctx.shadowBlur=on?16:0;
+    ctx.beginPath();ctx.arc(x,y-14+i*14,5,0,7);ctx.fill();ctx.shadowBlur=0;
+  });
+}
+
+function drawCar(d,c){
+  const [x,y,a]=place(d,c.t,c.l,c.p-LEN/2);
+  ctx.save();ctx.translate(x,y);ctx.rotate(a);
+  ctx.fillStyle='#fff4';ctx.beginPath();ctx.moveTo(LEN/2,-CW/2);ctx.lineTo(LEN/2+34,-CW);ctx.lineTo(LEN/2+34,CW);ctx.lineTo(LEN/2,CW/2);ctx.fill();
+  ctx.fillStyle=c.col;rr(-LEN/2,-CW/2,LEN,CW,6);ctx.fill();
+  ctx.fillStyle='#0006';rr(-LEN/2+8,-CW/2+3,LEN*.45,CW-6,3);ctx.fill();
+  ctx.fillStyle='#fff';ctx.fillRect(LEN/2-3,-CW/2+2,3,4);ctx.fillRect(LEN/2-3,CW/2-6,3,4);
+  if(c.v<20){ctx.fillStyle='#ff3b3b';ctx.fillRect(-LEN/2,-CW/2+2,3,4);ctx.fillRect(-LEN/2,CW/2-6,3,4);}
+  if(c.t!='F'&&c.p>150&&Math.floor(clock*3)%2){
+    const sy=c.t=='L'?-CW/2:CW/2;ctx.fillStyle='#ffa500';ctx.shadowColor='#ffa500';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.arc(LEN/2-3,sy,3.5,0,7);ctx.arc(-LEN/2+3,sy,3.5,0,7);ctx.fill();ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+function draw(){
+  drawScene();
+  for(const d of DIRS)for(const arr of lanes[d])for(const c of arr)drawCar(d,c);
+  const o=HALF+16;
+  drawLight(C+o,B0-46,st('S'),remaining(0),'U');   // Utara
+  drawLight(B1+46,C+o,st('W'),remaining(1),'T');   // Timur
+  drawLight(C-o,B1+46,st('N'),remaining(2),'S');   // Selatan
+  drawLight(B0-46,C-o,st('E'),remaining(3),'B');   // Barat
+}
+function ui(){
+  const m=Math.floor(clock/60),s=Math.floor(clock%60);
+  $('clock').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  $('cnt').textContent=count;
+  $('kc').textContent='Lurus '+kc.F+' | Kiri '+kc.L+' | Kanan '+kc.R;
+  const nm={g:'Hijau',y:'Kuning',r:'Merah'},cl={g:'#3bff7a',y:'#ffd23b',r:'#ff3b3b'};
+  for(let a=0;a<4;a++){
+    const s2=stI(a),rem=remaining(a);$('d'+a).style.background=cl[s2];
+    $('t'+a).textContent=nm[s2]+' '+(rem!=null?rem+' d lagi':(s2=='g'?'(menunggu tombol Ganti lampu)':'(menunggu giliran)'));
+  }
+  const man=mode=='manual';
+  $('dg').textContent=man?'manual':greenDur+' d';
+  $('dy').textContent=YEL+' d';
+  $('dr').textContent=man?'manual':3*(greenDur+YEL)+' d';
+  $('dc').textContent=man?'-':4*(greenDur+YEL)+' d';
+  $('dnote').textContent=man?'Mode manual: tiap Ganti lampu memberi giliran ke arah berikutnya (searah jarum jam).'
+    :'Giliran: Utara, Timur, Selatan, Barat. Merah = hijau + kuning tiga arah lainnya.';
+}
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  step(dt);draw();ui();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
